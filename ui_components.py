@@ -98,7 +98,7 @@ class ModernUI:
         brand_frame.pack(side="left", padx=24, pady=16)
         tk.Label(brand_frame, text="⬡", font=("Consolas", 20), bg=BG,
                  fg=ACCENT).pack(side="left", padx=(0, 10))
-        tk.Label(brand_frame, text="Markdown Maker", font=("Consolas", 16, "bold"),
+        tk.Label(brand_frame, text="MD FORGE", font=("Consolas", 16, "bold"),
                  bg=BG, fg=HEADER).pack(side="left")
         tk.Label(brand_frame, text="  /  File to Markdown Converter",
                  font=("Consolas", 10), bg=BG, fg=TEXT_DIM).pack(side="left")
@@ -197,6 +197,7 @@ class ModernUI:
         formats = [
             ("PDF", ".pdf", ACCENT2),
             ("Word", ".docx / .doc", ACCENT2),
+            ("PowerPoint", ".pptx / .ppt", ACCENT2),
             ("Text", ".txt / .rtf", TEXT_DIM),
             ("HTML", ".html / .htm", TEXT_DIM),
             ("CSV", ".csv", TEXT_DIM),

@@ -24,9 +24,10 @@ class MarkdownConverterApp:
 
     def add_files(self):
         filetypes = [
-            ("Supported files", "*.pdf *.docx *.doc *.txt *.rtf *.html *.htm *.csv *.odt *.epub *.md"),
+            ("Supported files", "*.pdf *.docx *.doc *.txt *.rtf *.html *.htm *.csv *.odt *.epub *.pptx *.ppt *.md"),
             ("PDF files", "*.pdf"),
             ("Word documents", "*.docx *.doc"),
+            ("PowerPoint presentations", "*.pptx *.ppt"),
             ("Text files", "*.txt *.rtf"),
             ("HTML files", "*.html *.htm"),
             ("CSV files", "*.csv"),

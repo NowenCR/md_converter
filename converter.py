@@ -1,6 +1,6 @@
 """
 converter.py — Core conversion engine for MD Forge
-Supports: PDF, DOCX, DOC, TXT, RTF, HTML, HTM, CSV, ODT, EPUB, MD
+Supports: PDF, DOCX, DOC, TXT, RTF, HTML, HTM, CSV, ODT, EPUB, PPTX, PPT, MD
 """
 
 import os
@@ -21,6 +21,8 @@ class FileConverter:
         ".csv": "_convert_csv",
         ".odt": "_convert_odt",
         ".epub": "_convert_epub",
+        ".pptx": "_convert_pptx",
+        ".ppt": "_convert_ppt",
         ".md": "_convert_md",
     }
 
@@ -344,6 +346,179 @@ class FileConverter:
             lines.append("\n---\n")
 
         return "\n".join(lines)
+
+    # ─── PPTX ───────────────────────────────────────────────────────────────
+
+    def _convert_pptx(self, filepath: str) -> str:
+        try:
+            from pptx import Presentation
+            from pptx.util import Pt
+            from pptx.enum.shapes import MSO_SHAPE_TYPE
+        except ImportError:
+            raise ImportError("python-pptx not installed. Run: pip install python-pptx")
+
+        prs = Presentation(filepath)
+        title = Path(filepath).stem
+        lines = [f"# {title}\n"]
+
+        for slide_num, slide in enumerate(prs.slides, 1):
+            slide_title = self._pptx_slide_title(slide)
+            if slide_title:
+                lines.append(f"\n---\n\n## Slide {slide_num}: {slide_title}\n")
+            else:
+                lines.append(f"\n---\n\n## Slide {slide_num}\n")
+
+            # Process shapes in reading order (top-to-bottom, left-to-right)
+            shapes = sorted(
+                slide.shapes,
+                key=lambda s: (s.top if s.top is not None else 0,
+                               s.left if s.left is not None else 0)
+            )
+
+            for shape in shapes:
+                # Skip the title shape (already handled above)
+                if shape == self._get_title_shape(slide):
+                    continue
+
+                # Tables
+                if shape.has_table:
+                    rows = []
+                    for row in shape.table.rows:
+                        rows.append([cell.text_frame.text.strip() for cell in row.cells])
+                    lines.append(self._table_to_md(rows))
+                    continue
+
+                # Text frames
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        text = para.text.strip()
+                        if not text:
+                            continue
+                        level = para.level  # 0 = top level, 1+ = indented
+                        # Detect if it looks like a bullet list item
+                        is_bullet = self._is_bullet_para(para)
+                        if is_bullet:
+                            indent = "  " * level
+                            lines.append(f"{indent}- {text}")
+                        else:
+                            # Body text: treat level-0 as paragraph, deeper as bullet
+                            if level == 0:
+                                lines.append(f"\n{text}\n")
+                            else:
+                                indent = "  " * (level - 1)
+                                lines.append(f"{indent}- {text}")
+
+            # Speaker notes
+            if slide.has_notes_slide:
+                notes_tf = slide.notes_slide.notes_text_frame
+                notes_text = notes_tf.text.strip() if notes_tf else ""
+                if notes_text:
+                    lines.append(f"\n> **Notes:** {notes_text}\n")
+
+        return "\n".join(lines)
+
+    def _pptx_slide_title(self, slide) -> str:
+        """Extract the title text from a slide, or empty string."""
+        shape = self._get_title_shape(slide)
+        if shape and shape.has_text_frame:
+            return shape.text_frame.text.strip()
+        return ""
+
+    def _get_title_shape(self, slide):
+        """Return the title placeholder shape if present."""
+        from pptx.util import Pt
+        from pptx.enum.text import PP_ALIGN
+        for shape in slide.shapes:
+            if shape.is_placeholder:
+                ph = shape.placeholder_format
+                # idx 0 = title, idx 1 = body/subtitle on title slide
+                if ph and ph.idx == 0:
+                    return shape
+        return None
+
+    def _is_bullet_para(self, para) -> bool:
+        """Heuristic: treat as bullet if level > 0 or explicit bullet char present."""
+        if para.level > 0:
+            return True
+        text = para.text.strip()
+        if text.startswith(("•", "–", "—", "-", "▪", "◦", "○", "●")):
+            return True
+        # Check XML for bullet formatting
+        try:
+            from lxml import etree
+            pPr = para._p.find(
+                "{http://schemas.openxmlformats.org/drawingml/2006/main}pPr"
+            )
+            if pPr is not None:
+                buNone = pPr.find(
+                    "{http://schemas.openxmlformats.org/drawingml/2006/main}buNone"
+                )
+                if buNone is not None:
+                    return False
+                buChar = pPr.find(
+                    "{http://schemas.openxmlformats.org/drawingml/2006/main}buChar"
+                )
+                buAutoNum = pPr.find(
+                    "{http://schemas.openxmlformats.org/drawingml/2006/main}buAutoNum"
+                )
+                if buChar is not None or buAutoNum is not None:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    # ─── PPT (legacy binary) ────────────────────────────────────────────────
+
+    def _convert_ppt(self, filepath: str) -> str:
+        """
+        Legacy .ppt (PowerPoint 97-2003) conversion.
+        Strategy 1: LibreOffice headless → .pptx → reuse _convert_pptx
+        Strategy 2: LibreOffice headless → .txt → clean_text_to_md
+        Strategy 3: python-pptx direct attempt (sometimes works for newer .ppt)
+        """
+        import subprocess
+        import tempfile
+
+        tmp_dir = tempfile.mkdtemp()
+
+        # Strategy 1: convert via LibreOffice to pptx
+        try:
+            result = subprocess.run(
+                ["soffice", "--headless", "--convert-to", "pptx",
+                 "--outdir", tmp_dir, filepath],
+                capture_output=True, timeout=60
+            )
+            pptx_path = os.path.join(tmp_dir, Path(filepath).stem + ".pptx")
+            if os.path.exists(pptx_path):
+                return self._convert_pptx(pptx_path)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Strategy 2: convert via LibreOffice to txt
+        try:
+            result = subprocess.run(
+                ["soffice", "--headless", "--convert-to", "txt",
+                 "--outdir", tmp_dir, filepath],
+                capture_output=True, timeout=60
+            )
+            txt_path = os.path.join(tmp_dir, Path(filepath).stem + ".txt")
+            if os.path.exists(txt_path):
+                with open(txt_path, "r", encoding="utf-8", errors="replace") as f:
+                    return self._clean_text_to_md(f.read())
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Strategy 3: try python-pptx directly (may work for some .ppt files)
+        try:
+            return self._convert_pptx(filepath)
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            "Cannot convert .ppt (legacy) files without LibreOffice.\n"
+            "Install: https://www.libreoffice.org/download/download/\n"
+            "Or re-save the file as .pptx from PowerPoint."
+        )
 
     # ─── MD (passthrough) ───────────────────────────────────────────────────
 
